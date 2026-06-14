@@ -298,32 +298,36 @@ function safeSendMessage(msg) {
 // -----------------------------------------------------------------------------
 // Engine Strength (Elo) shaping
 // -----------------------------------------------------------------------------
-// The UI sends a target Elo. We translate it into the right UCI options so the
-// engine plays *at that level* instead of at full ~3600 strength.
+// The UI sends a target Elo. We weaken the engine using "Skill Level" (0..20).
 //
-//   • >= 3190 (or absent)  → full strength (UCI_LimitStrength off)
-//   • 1320..3189           → UCI_LimitStrength on + UCI_Elo = target
-//                            (the official Stockfish strength limiter)
-//   • < 1320               → below Stockfish's UCI_Elo floor, so we weaken via
-//                            "Skill Level" (0..19) which makes it deliberately
-//                            pick human-like, sub-optimal beginner moves.
+// We deliberately do NOT use UCI_LimitStrength / UCI_Elo: in this Stockfish-lite
+// build that option forces single-PV mode and, in practice, sometimes never
+// returns a bestmove — leaving the panel stuck on "Analyzing…". Skill Level keeps
+// normal MultiPV output and reliably emits a bestmove, so it's the safe path.
+//
+//   • >= 3190 (or absent)  → Skill Level 20 (full strength)
+//   • lower targets        → mapped down to Skill Level 0 (weakest beginner)
+
+function eloToSkill(elo) {
+  if (!elo || elo >= 3190) return 20;
+  if (elo >= 2800) return 19;
+  if (elo >= 2400) return 17;
+  if (elo >= 2000) return 14;
+  if (elo >= 1600) return 11;
+  if (elo >= 1320) return 8;
+  if (elo >= 1000) return 5;
+  if (elo >= 800)  return 3;
+  if (elo >= 600)  return 2;
+  if (elo >= 400)  return 1;
+  return 0;
+}
 
 function strengthCommands(elo) {
-  const cmds = [];
-  if (!elo || elo >= 3190) {
-    cmds.push('setoption name UCI_LimitStrength value false');
-    cmds.push('setoption name Skill Level value 20');
-  } else if (elo >= 1320) {
-    cmds.push('setoption name UCI_LimitStrength value true');
-    cmds.push('setoption name UCI_Elo value ' + elo);
-    cmds.push('setoption name Skill Level value 20');
-  } else {
-    cmds.push('setoption name UCI_LimitStrength value false');
-    // Map ~200..1320 onto Skill Level 0..19 (0 = weakest beginner).
-    const sk = Math.max(0, Math.min(19, Math.round(((elo - 200) / (1320 - 200)) * 19)));
-    cmds.push('setoption name Skill Level value ' + sk);
-  }
-  return cmds;
+  return [
+    // Ensure the official limiter is off (Skill Level is what we use).
+    'setoption name UCI_LimitStrength value false',
+    'setoption name Skill Level value ' + eloToSkill(elo),
+  ];
 }
 
 // For lower target strengths, also shorten the search so the recommended move

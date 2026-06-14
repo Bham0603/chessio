@@ -99,14 +99,16 @@ Web Worker / WASM, so analysis lives in `offscreen.html` + `offscreen.js`.
 
 - **Strength select** (`#ca-elo-select`, default "Max" = 3600/full) — sets the
   target engine strength via `engineElo`. Sent as `elo` in the `ANALYZE_FEN`
-  message; `offscreen.js` translates it: `>=3190`/Max → full strength
-  (`UCI_LimitStrength` off); `1320–3189` → `UCI_LimitStrength` on + `UCI_Elo`;
-  `<1320` → weakened via `Skill Level` (0–19, mapped from ~200–1320). Lower
-  targets also cap search depth (`effectiveDepth()`) for human-like shallow play.
-  Because a strength-limited `bestmove` may differ from the top MultiPV line,
-  `offscreen.js` promotes the line starting with `bestmove` to rank 1 so the
-  primary arrow shows the level-appropriate move. Gets a yellow `.ca-elo-limited`
-  tint when below Max.
+  message; `offscreen.js` maps it to a Stockfish **`Skill Level` (0–20)** via
+  `eloToSkill()` (Max → 20, down to 0 for the weakest). We deliberately do **not**
+  use `UCI_LimitStrength`/`UCI_Elo`: in this lite-single build that forces single-PV
+  mode and can hang without ever returning a `bestmove`. Lower targets also cap
+  search depth (`effectiveDepth()`) for human-like shallow play. Because a
+  skill-limited `bestmove` may differ from the top MultiPV line, `offscreen.js`
+  promotes (or synthesizes) the line for `bestmove` to rank 1 so the primary arrow
+  always shows the level-appropriate move. Gets a yellow `.ca-elo-limited` tint
+  when below Max. `content.js` also arms an `armWatchdog()` timer that retries if
+  the engine goes silent, so the panel never stays stuck on "Analyzing…".
 - **Depth select** — Stockfish search depth (10–24).
 - **♟ "My moves only"** (`#ca-mymoves-btn`, green when on, default ON) — toggles
   `myMovesOnly`. When on, `analyzeCurrentPosition()` only runs the engine while it

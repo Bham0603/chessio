@@ -145,30 +145,42 @@ By default the engine plays at **full strength (≈3600)** — which produces in
 perfect moves. The **Strength selector** (`♟` dropdown in the header) lets you dial
 it down so the suggested moves reflect a *specific rating* instead.
 
-Pick a target and `offscreen.js` translates it into the right UCI options:
+Pick a target and `offscreen.js` maps it to a Stockfish **`Skill Level` (0–20)**:
 
-| Target you pick | What happens under the hood |
+| Target you pick | Skill Level |
 |---|---|
-| **Max** (3600) | `UCI_LimitStrength` **off** — full strength (default) |
-| **2800 – 1320** | `UCI_LimitStrength` **on** + `UCI_Elo` set to the target (Stockfish's official limiter) |
-| **~1000 / ~800 / ~600 / ~400 / ~250** | Below Stockfish's `UCI_Elo` floor → weakened via `Skill Level` (0–19, mapped from ~200–1320) for deliberately human-like beginner moves |
+| **Max** (3600) | 20 — full strength (default) |
+| **2800** | 19 |
+| **2400** | 17 |
+| **2000** | 14 |
+| **1600** | 11 |
+| **1320** | 8 |
+| **~1000 / ~800 / ~600 / ~400 / ~250** | 5 / 3 / 2 / 1 / 0 |
 
-Two extra touches make the lower levels behave like a real human:
+> **Why Skill Level and not `UCI_LimitStrength`/`UCI_Elo`?** Stockfish's official
+> Elo limiter forces *single-PV* mode and, in this lite-single WASM build, can hang
+> without ever returning a `bestmove` (the panel sticks on "Analyzing…"). `Skill
+> Level` keeps normal MultiPV output and reliably returns a move, so it's the safe
+> path for an overlay that must always respond.
+
+Three extra touches make the lower levels robust and human-like:
 
 - **Shorter search.** Lower targets cap the search depth (`effectiveDepth()` → 8–12
   plies) so the move reflects shallow calculation rather than deep engine vision.
-- **Honest "chosen move" arrow.** A strength-limited engine's actual `bestmove` may
-  differ from the top objective line, so the engine **promotes the line it actually
-  chose to rank 1** — the primary arrow shows the level-appropriate move, not the
-  perfect one. (At Max strength this is a no-op.)
+- **Honest "chosen move" arrow.** A skill-limited engine's actual `bestmove` may
+  differ from the top objective line, so the engine **promotes (or synthesizes) the
+  line for the move it actually chose to rank 1** — the primary arrow always shows
+  the level-appropriate move. (At Max strength this is a no-op.)
+- **Watchdog.** If the engine ever goes silent, `content.js` retries automatically
+  so the panel never gets permanently stuck.
 
 The selector turns **yellow** whenever it's below Max, as a reminder that
 suggestions are intentionally weakened.
 
-> ⚠️ **Limitation:** Stockfish can't *truly* emulate sub-~1350 play — `UCI_Elo`
-> bottoms out at 1320 and `Skill Level 0` floors around ~1350. The ~250–400 options
-> push the engine as weak as it allows (clearly blundery, shallow moves) but are
-> approximations of those bands, not exact reproductions.
+> ⚠️ **Limitation:** Stockfish can't *truly* emulate sub-~1350 play — `Skill Level 0`
+> floors around ~1350. The ~250–600 options push the engine as weak as it allows
+> (clearly blundery, shallow moves) but are approximations of those bands, not exact
+> reproductions.
 
 ---
 

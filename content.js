@@ -602,6 +602,25 @@
   // get moves a ~300-rated player would play) instead of perfect 3600 lines.
   let engineElo = 3600;
 
+  // Watchdog: if the engine goes silent (no progress/result) for too long, we
+  // nudge it so the panel never gets permanently stuck on "Analyzing…".
+  let analysisWatchdog = null;
+  const ANALYSIS_TIMEOUT_MS = 12000;
+
+  function armWatchdog(fen) {
+    clearTimeout(analysisWatchdog);
+    analysisWatchdog = setTimeout(() => {
+      const ui = window.__chessAssistantUI;
+      if (ui) ui.setStatus('Engine slow — retrying…', true);
+      console.warn('[Chess Assistant] Engine silent — retrying analysis');
+      chrome.runtime.sendMessage({ type: 'STOP_ENGINE' });
+      chrome.runtime.sendMessage({
+        type: 'ANALYZE_FEN', fen, depth: analysisDepth, elo: engineElo,
+      });
+      armWatchdog(fen); // keep watching until a result clears it
+    }, ANALYSIS_TIMEOUT_MS);
+  }
+
   // ── User-facing orientation / move-filter state ─────────────────────────────
   // playerColorOverride: null = auto-detect from the site; otherwise force
   //   'white' | 'black'. Set by the manual flip button when auto-detection is
@@ -657,6 +676,7 @@
     // When the filter is on and it's the opponent to move, don't analyze —
     // suppress arrows/PV so we never surface the opponent's best move.
     if (myMovesOnly && !isMyTurn) {
+      clearTimeout(analysisWatchdog);
       lastLines = null;
       ui.updateArrows([], playerColor);
       ui.updatePVLines([]);
@@ -683,6 +703,7 @@
       depth: analysisDepth,
       elo: engineElo,
     });
+    armWatchdog(fen);
   }
 
   /**
@@ -1389,6 +1410,7 @@
     }
 
     if (message.type === 'ENGINE_RESULT' && window.__chessAssistantUI) {
+      clearTimeout(analysisWatchdog); // got a result — stop watching
       const data = message.data;
       if (!data) {
         console.warn('[Chess Assistant] ENGINE_RESULT received but data is missing');
@@ -1426,6 +1448,11 @@
       const ui = window.__chessAssistantUI;
       const progData = message.data;
       if (!progData) return;
+
+      // Engine is alive and searching — refresh the watchdog so a legitimately
+      // long search doesn't trigger a spurious retry; it only fires after a true
+      // stall (no progress at all for ANALYSIS_TIMEOUT_MS).
+      if (lastFEN) armWatchdog(lastFEN);
 
       if (progData.score) {
         ui.updateEval(progData.score);
