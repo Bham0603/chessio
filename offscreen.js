@@ -225,9 +225,13 @@ function handleEngineOutput(line) {
 
   if (line.startsWith('info depth')) {
     const parsed = parseInfoLine(line);
-    if (parsed && parsed.multipv) {
-      pvLines[parsed.multipv] = parsed;
-      if (parsed.multipv === 1) {
+    if (parsed && parsed.pv && parsed.pv.length) {
+      // In strength-limited mode (UCI_LimitStrength on) Stockfish runs single-PV
+      // and OMITS the `multipv` token. Default it to 1 so these lines are still
+      // captured — otherwise pvLines stays empty and no moves are ever shown.
+      const mpv = parsed.multipv || 1;
+      pvLines[mpv] = parsed;
+      if (mpv === 1) {
         safeSendMessage({
           type: 'ENGINE_PROGRESS',
           tabId: analysisTabId,
@@ -253,14 +257,24 @@ function handleEngineOutput(line) {
       }
     }
 
-    // When the engine is strength-limited, its chosen `bestmove` may not be the
-    // objectively-top MultiPV line. Promote the line that actually starts with
-    // `bestmove` to rank 1 so the primary arrow shows the level-appropriate move.
+    // Surface the engine's actual choice as the primary (rank-1) move. When the
+    // engine is strength-limited its chosen `bestmove` may not be the top MultiPV
+    // line — or no PV line for it was reported at all — so promote it if present,
+    // otherwise synthesize a line for it. This guarantees an arrow always shows.
     // At full strength this is a no-op (bestmove === multipv 1's first move).
-    const chosenIdx = result.lines.findIndex((l) => l.pv && l.pv[0] === bestMove);
-    if (chosenIdx > 0) {
-      const [chosen] = result.lines.splice(chosenIdx, 1);
-      result.lines.unshift(chosen);
+    if (bestMove && bestMove !== '(none)') {
+      const idx = result.lines.findIndex((l) => l.pv && l.pv[0] === bestMove);
+      if (idx > 0) {
+        const [chosen] = result.lines.splice(idx, 1);
+        result.lines.unshift(chosen);
+      } else if (idx === -1) {
+        result.lines.unshift({
+          rank: 1,
+          score: (result.lines[0] && result.lines[0].score) || { type: 'cp', value: 0 },
+          pv: [bestMove],
+          depth: (result.lines[0] && result.lines[0].depth) || 0,
+        });
+      }
       result.lines.forEach((l, i) => { l.rank = i + 1; });
     }
 
