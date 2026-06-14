@@ -165,8 +165,14 @@ Pick a target and `offscreen.js` maps it to a Stockfish **`Skill Level` (0–20)
 
 Three extra touches make the lower levels robust and human-like:
 
-- **Shorter search.** Lower targets cap the search depth (`effectiveDepth()` → 8–12
-  plies) so the move reflects shallow calculation rather than deep engine vision.
+- **Time-capped search.** Every search is bounded by `go depth N movetime T`
+  (`searchTime()` ≈ 0.7–2s), so depth is an *upper bound*, not a fixed target. The
+  engine always returns its best move within the budget — keeping the panel
+  responsive on low-end / single-thread machines, where a complex mid/endgame
+  position could otherwise take 30s+ to reach depth 18.
+- **Shorter search at low levels.** Lower targets also cap the depth
+  (`effectiveDepth()` → 8–12 plies) so the move reflects shallow, human-like
+  calculation rather than deep engine vision.
 - **Honest "chosen move" arrow.** A skill-limited engine's actual `bestmove` may
   differ from the top objective line, so the engine **promotes (or synthesizes) the
   line for the move it actually chose to rank 1** — the primary arrow always shows

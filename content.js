@@ -602,22 +602,34 @@
   // get moves a ~300-rated player would play) instead of perfect 3600 lines.
   let engineElo = 3600;
 
-  // Watchdog: if the engine goes silent (no progress/result) for too long, we
-  // nudge it so the panel never gets permanently stuck on "Analyzing…".
+  // Watchdog: searches are time-bounded in the engine (≤~2s), so a result should
+  // always arrive quickly. If the engine genuinely goes silent (no progress and
+  // no result) for ANALYSIS_TIMEOUT_MS, nudge it — but only a few times, then give
+  // up gracefully instead of looping forever (which would peg a low-end CPU).
   let analysisWatchdog = null;
-  const ANALYSIS_TIMEOUT_MS = 12000;
+  let watchdogRetries = 0;
+  const ANALYSIS_TIMEOUT_MS = 7000;
+  const MAX_WATCHDOG_RETRIES = 2;
 
-  function armWatchdog(fen) {
+  function armWatchdog(fen, isRetry) {
     clearTimeout(analysisWatchdog);
+    if (!isRetry) watchdogRetries = 0; // fresh search (or live progress) resets
     analysisWatchdog = setTimeout(() => {
       const ui = window.__chessAssistantUI;
+      if (watchdogRetries >= MAX_WATCHDOG_RETRIES) {
+        // Stop hammering the engine — show the last state and wait for the next move.
+        if (ui) ui.setStatus('Engine busy — try a lower depth', false);
+        console.warn('[Chess Assistant] Engine still silent — giving up retries');
+        return;
+      }
+      watchdogRetries++;
       if (ui) ui.setStatus('Engine slow — retrying…', true);
-      console.warn('[Chess Assistant] Engine silent — retrying analysis');
+      console.warn(`[Chess Assistant] Engine silent — retry ${watchdogRetries}/${MAX_WATCHDOG_RETRIES}`);
       chrome.runtime.sendMessage({ type: 'STOP_ENGINE' });
       chrome.runtime.sendMessage({
         type: 'ANALYZE_FEN', fen, depth: analysisDepth, elo: engineElo,
       });
-      armWatchdog(fen); // keep watching until a result clears it
+      armWatchdog(fen, true); // keep watching, preserving the retry count
     }, ANALYSIS_TIMEOUT_MS);
   }
 
