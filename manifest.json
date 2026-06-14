@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "Chess Assistant",
+  "version": "1.0.0",
+  "description": "Live chess analysis overlay with Stockfish engine — shows best moves, evaluation bar, and mini-board on Chess.com and Lichess.",
+
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "offscreen",
+    "tabs"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.chess.com/*",
+        "*://*.lichess.org/*"
+      ],
+      "js": ["content.js"],
+      "css": [],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "engine/*",
+        "offscreen.html",
+        "ui.js",
+        "styles.css"
+      ],
+      "matches": [
+        "*://*.chess.com/*",
+        "*://*.lichess.org/*"
+      ]
+    }
+  ],
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "Chess Assistant"
+  }
+}

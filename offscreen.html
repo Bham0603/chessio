@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Chess Assistant — Offscreen Engine</title>
+</head>
+<body>
+  <!--
+    This is the offscreen document for the Chess Assistant extension.
+    It hosts the Stockfish WASM engine for chess analysis.
+    The engine is loaded as a module (not a Worker) for maximum compatibility
+    with Chrome extension CSP and offscreen document constraints.
+  -->
+  <script src="engine/stockfish-18-lite-single.js" id="stockfish-engine"></script>
+  <script src="offscreen.js"></script>
+</body>
+</html>
