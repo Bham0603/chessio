@@ -963,9 +963,15 @@
   // UI UPDATE FUNCTIONS
   // ===========================================================================
 
-  /** Unicode chess pieces for rendering on the mini-board */
+  /**
+   * Unicode chess pieces for rendering on the mini-board.
+   * We use the SOLID (filled) glyph set for BOTH colors and distinguish white
+   * vs. black purely via CSS fill + outline (.ca-white-piece / .ca-black-piece).
+   * Mixing the outline glyphs (♔♕♖) for white with solid glyphs for black looks
+   * inconsistent and thin — solid silhouettes read far cleaner at small sizes.
+   */
   const PIECE_UNICODE = {
-    K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙',
+    K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '♟',
     k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
   };
 
