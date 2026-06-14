@@ -152,6 +152,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             type: 'ANALYZE_FEN',
             fen: message.fen,
             depth: message.depth || 18,
+            elo: message.elo,      // target engine strength (undefined = full)
             tabId: sender.tab.id,  // pass tabId for round-trip
           });
         }, 100);
