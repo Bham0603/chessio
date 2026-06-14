@@ -253,6 +253,17 @@ function handleEngineOutput(line) {
       }
     }
 
+    // When the engine is strength-limited, its chosen `bestmove` may not be the
+    // objectively-top MultiPV line. Promote the line that actually starts with
+    // `bestmove` to rank 1 so the primary arrow shows the level-appropriate move.
+    // At full strength this is a no-op (bestmove === multipv 1's first move).
+    const chosenIdx = result.lines.findIndex((l) => l.pv && l.pv[0] === bestMove);
+    if (chosenIdx > 0) {
+      const [chosen] = result.lines.splice(chosenIdx, 1);
+      result.lines.unshift(chosen);
+      result.lines.forEach((l, i) => { l.rank = i + 1; });
+    }
+
     console.log('[Chess Assistant] ENGINE_RESULT:', bestMove, 'lines:', result.lines.length);
     safeSendMessage({ type: 'ENGINE_RESULT', tabId: analysisTabId, data: result });
     pvLines = {};
@@ -268,6 +279,46 @@ function safeSendMessage(msg) {
   try {
     chrome.runtime.sendMessage(msg, () => { void chrome.runtime.lastError; });
   } catch (e) { /* service worker may be inactive */ }
+}
+
+// -----------------------------------------------------------------------------
+// Engine Strength (Elo) shaping
+// -----------------------------------------------------------------------------
+// The UI sends a target Elo. We translate it into the right UCI options so the
+// engine plays *at that level* instead of at full ~3600 strength.
+//
+//   • >= 3190 (or absent)  → full strength (UCI_LimitStrength off)
+//   • 1320..3189           → UCI_LimitStrength on + UCI_Elo = target
+//                            (the official Stockfish strength limiter)
+//   • < 1320               → below Stockfish's UCI_Elo floor, so we weaken via
+//                            "Skill Level" (0..19) which makes it deliberately
+//                            pick human-like, sub-optimal beginner moves.
+
+function strengthCommands(elo) {
+  const cmds = [];
+  if (!elo || elo >= 3190) {
+    cmds.push('setoption name UCI_LimitStrength value false');
+    cmds.push('setoption name Skill Level value 20');
+  } else if (elo >= 1320) {
+    cmds.push('setoption name UCI_LimitStrength value true');
+    cmds.push('setoption name UCI_Elo value ' + elo);
+    cmds.push('setoption name Skill Level value 20');
+  } else {
+    cmds.push('setoption name UCI_LimitStrength value false');
+    // Map ~200..1320 onto Skill Level 0..19 (0 = weakest beginner).
+    const sk = Math.max(0, Math.min(19, Math.round(((elo - 200) / (1320 - 200)) * 19)));
+    cmds.push('setoption name Skill Level value ' + sk);
+  }
+  return cmds;
+}
+
+// For lower target strengths, also shorten the search so the recommended move
+// reflects shallow, human-like calculation rather than deep engine vision.
+function effectiveDepth(elo, depth) {
+  const d = depth || 18;
+  if (elo && elo < 1320) return Math.min(d, 8);
+  if (elo && elo < 2000) return Math.min(d, 12);
+  return d;
 }
 
 function parseInfoLine(line) {
@@ -300,24 +351,32 @@ function parseInfoLine(line) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ANALYZE_FEN') {
-    const { fen, depth, tabId } = message;
+    const { fen, depth, tabId, elo } = message;
     analysisTabId = tabId || null;
 
     if (!stockfishWorker && !engineModule) initEngine();
 
+    const strengthCmds = strengthCommands(elo);
+    const goDepth = effectiveDepth(elo, depth);
+
     if (!isEngineReady) {
       console.log('[Chess Assistant] Not ready, queuing analysis...');
       pendingCommands = pendingCommands.filter(c =>
-        !c.startsWith('position') && !c.startsWith('go') && c !== 'stop'
+        !c.startsWith('position') && !c.startsWith('go') && c !== 'stop' &&
+        !c.startsWith('setoption name UCI_LimitStrength') &&
+        !c.startsWith('setoption name UCI_Elo') &&
+        !c.startsWith('setoption name Skill Level')
       );
       pendingCommands.push('stop');
+      strengthCmds.forEach((c) => pendingCommands.push(c));
       pendingCommands.push(`position fen ${fen}`);
-      pendingCommands.push(`go depth ${depth || 18}`);
+      pendingCommands.push(`go depth ${goDepth}`);
     } else {
       // Send analysis commands (they'll be queued properly in module mode)
       sendToEngine('stop');
+      strengthCmds.forEach((c) => sendToEngine(c));
       sendToEngine(`position fen ${fen}`);
-      sendToEngine(`go depth ${depth || 18}`);
+      sendToEngine(`go depth ${goDepth}`);
     }
 
     sendResponse({ status: 'analysis_started' });

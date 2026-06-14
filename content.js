@@ -439,29 +439,46 @@
   // ===========================================================================
 
   /**
-   * Detect whose turn it is by examining the move list on Chess.com.
+   * Detect whose turn it is from the page's move list.
+   *
+   * Plies are 1-indexed: ply 1 = White's first move, ply 2 = Black's reply, …
+   * After the highest completed ply P, the side to move is White when P is even
+   * and Black when P is odd. Using the MAX ply (rather than counting elements)
+   * is robust against duplicate/variation nodes that would corrupt a raw count.
+   *
    * @returns {'w'|'b'} Active color
    */
   function detectActiveTurn() {
     try {
-      // Chess.com shows moves in a move list. Count the individual moves.
-      // Each "row" has a white move and optionally a black move.
-      // The last move in the list tells us whose turn is next.
-      const moveElements = document.querySelectorAll(
-        '.move-text-component, [data-ply], .move .node, .main-line-ply'
-      );
-
-      if (moveElements.length > 0) {
-        // If total move count is even, it's white's turn; odd = black's turn
-        return moveElements.length % 2 === 0 ? 'w' : 'b';
+      // 1) Most reliable: explicit ply numbers (Chess.com + Lichess both expose
+      //    data-ply on move nodes). Take the largest one.
+      let maxPly = 0;
+      document.querySelectorAll('[data-ply]').forEach((el) => {
+        const ply = parseInt(el.getAttribute('data-ply'), 10);
+        if (!isNaN(ply) && ply > maxPly) maxPly = ply;
+      });
+      if (maxPly > 0) {
+        return maxPly % 2 === 0 ? 'w' : 'b';
       }
 
-      // Fallback: look at highlighted/last-move indicators
-      const lastMoveHighlight = document.querySelector('.highlight');
-      if (!lastMoveHighlight) return 'w'; // No moves yet = white's turn
+      // 2) Fallback: count individual move nodes (one selector at a time so we
+      //    never double-count an element that matches several selectors).
+      const moveSelectors = [
+        '.main-line-ply',        // Chess.com
+        '.move-text-component',  // Chess.com (older)
+        'kwdb',                  // Lichess move SAN tags
+        'l4x move, .tview2 move',// Lichess move list
+      ];
+      for (const sel of moveSelectors) {
+        const count = document.querySelectorAll(sel).length;
+        if (count > 0) {
+          return count % 2 === 0 ? 'w' : 'b';
+        }
+      }
 
+      // 3) No moves played yet → White to move.
     } catch (e) {
-      // If anything fails, default to white
+      // If anything fails, default to white.
     }
     return 'w';
   }
@@ -545,6 +562,9 @@
    * @returns {"white"|"black"}
    */
   function detectPlayerColor() {
+    // Manual flip button takes precedence over auto-detection.
+    if (playerColorOverride) return playerColorOverride;
+
     const site = detectSite();
 
     if (site === 'chesscom') {
@@ -577,6 +597,23 @@
   let analysisDepth = 18; // Default analysis depth
   let pollingInterval = null;
 
+  // engineElo: target Stockfish strength. 3600 = full strength (default). Lower
+  // values make the engine recommend level-appropriate moves (e.g. set ~300 to
+  // get moves a ~300-rated player would play) instead of perfect 3600 lines.
+  let engineElo = 3600;
+
+  // ── User-facing orientation / move-filter state ─────────────────────────────
+  // playerColorOverride: null = auto-detect from the site; otherwise force
+  //   'white' | 'black'. Set by the manual flip button when auto-detection is
+  //   wrong (or the user just wants the other perspective).
+  let playerColorOverride = null;
+  // myMovesOnly: when true, only analyze and draw arrows while it is the user's
+  //   own turn. Stops the engine from suggesting the opponent's best moves.
+  let myMovesOnly = true;
+  // Cache of the most recent engine PV lines so we can re-render arrows when the
+  // user flips the board without waiting for a fresh analysis.
+  let lastLines = null;
+
   /**
    * Compare only the piece-placement portion of two FEN strings.
    * This avoids false negatives from metadata differences (turn, castling, etc.)
@@ -594,16 +631,49 @@
     lastFEN = fen;
 
     console.log('[Chess Assistant] New position detected:', fen);
+    analyzeCurrentPosition();
+  }
 
-    // Update the mini-board immediately
-    if (window.__chessAssistantUI) {
-      window.__chessAssistantUI.updateBoard(fen, detectPlayerColor());
-      window.__chessAssistantUI.setStatus('Analyzing...', true);
-      // Clear stale PV lines so user sees fresh "Analyzing..." state
-      const pvContainer = window.__chessAssistantUI.shadowRoot.getElementById('ca-pv-lines');
+  /**
+   * Render the current position (lastFEN) and either trigger analysis or, when
+   * "my moves only" is on and it is the opponent's turn, show a waiting state.
+   * Safe to call repeatedly (e.g. after the user flips the board or toggles the
+   * move filter) — it does not depend on the position having changed.
+   */
+  function analyzeCurrentPosition() {
+    const fen = lastFEN;
+    if (!fen || !window.__chessAssistantUI) return;
+
+    const ui = window.__chessAssistantUI;
+    const playerColor = detectPlayerColor();
+
+    // Always reflect the live position on the mini-board.
+    ui.updateBoard(fen, playerColor);
+
+    // Whose move is it? The active-color field of the FEN we built.
+    const activeColor = fen.split(' ')[1] === 'b' ? 'black' : 'white';
+    const isMyTurn = activeColor === playerColor;
+
+    // When the filter is on and it's the opponent to move, don't analyze —
+    // suppress arrows/PV so we never surface the opponent's best move.
+    if (myMovesOnly && !isMyTurn) {
+      lastLines = null;
+      ui.updateArrows([], playerColor);
+      ui.updatePVLines([]);
+      ui.setStatus("Opponent's turn — waiting", false);
+      const pvContainer = ui.shadowRoot.getElementById('ca-pv-lines');
       if (pvContainer) {
-        pvContainer.innerHTML = '<div class="ca-pv-line ca-pv-loading">Analyzing position...</div>';
+        pvContainer.innerHTML =
+          '<div class="ca-pv-line ca-pv-loading">Opponent to move…</div>';
       }
+      return;
+    }
+
+    ui.setStatus('Analyzing...', true);
+    const pvContainer = ui.shadowRoot.getElementById('ca-pv-lines');
+    if (pvContainer) {
+      pvContainer.innerHTML =
+        '<div class="ca-pv-line ca-pv-loading">Analyzing position...</div>';
     }
 
     // Send FEN to the background for Stockfish analysis
@@ -611,6 +681,7 @@
       type: 'ANALYZE_FEN',
       fen: fen,
       depth: analysisDepth,
+      elo: engineElo,
     });
   }
 
@@ -771,11 +842,30 @@
         <span class="ca-title-text">Chess Assistant</span>
       </div>
       <div class="ca-header-controls">
+        <select class="ca-elo-select" id="ca-elo-select" title="Engine strength — match your opponent's Elo so the suggested moves look human, not 3600-perfect">
+          ${[
+            { v: 3600, label: 'Max' },
+            { v: 2800, label: '2800' },
+            { v: 2400, label: '2400' },
+            { v: 2000, label: '2000' },
+            { v: 1600, label: '1600' },
+            { v: 1320, label: '1320' },
+            { v: 1000, label: '~1000' },
+            { v: 800,  label: '~800' },
+            { v: 600,  label: '~600' },
+            { v: 400,  label: '~400' },
+            { v: 250,  label: '~250' },
+          ]
+            .map((o) => `<option value="${o.v}" ${o.v === 3600 ? 'selected' : ''}>♟ ${o.label}</option>`)
+            .join('')}
+        </select>
         <select class="ca-depth-select" id="ca-depth-select" title="Analysis Depth">
           ${[10, 12, 14, 16, 18, 20, 22, 24]
             .map((d) => `<option value="${d}" ${d === 18 ? 'selected' : ''}>D${d}</option>`)
             .join('')}
         </select>
+        <button class="ca-btn ca-mymoves-btn ca-toggle-on" id="ca-mymoves-btn" title="Only show YOUR best moves (hide opponent's)">♟</button>
+        <button class="ca-btn ca-flip-btn" id="ca-flip-btn" title="Flip board / switch your side">⇅</button>
         <button class="ca-btn ca-minimize-btn" id="ca-minimize-btn" title="Minimize">─</button>
         <button class="ca-btn ca-close-btn" id="ca-close-btn" title="Hide (Ctrl+Shift+A)">✕</button>
       </div>
@@ -865,6 +955,7 @@
       setStatus: (text, isActive) => setStatus(shadowRoot, text, isActive),
       toggle: () => toggleUI(container),
       setDepth: (d) => { analysisDepth = d; },
+      setElo: (e) => { engineElo = e; },
     };
   }
 
@@ -1182,6 +1273,19 @@
       });
     }
 
+    // Engine strength (Elo) selector — adjusts how strong the suggested moves are.
+    const eloSelect = shadowRoot.getElementById('ca-elo-select');
+    if (eloSelect) {
+      eloSelect.addEventListener('change', (e) => {
+        engineElo = parseInt(e.target.value, 10);
+        console.log(`[Chess Assistant] Engine strength set to ${engineElo} Elo`);
+        // Highlight the control whenever it's below full strength.
+        eloSelect.classList.toggle('ca-elo-limited', engineElo < 3600);
+        // Re-analyze the current position at the new strength.
+        analyzeCurrentPosition();
+      });
+    }
+
     // Depth selector
     const depthSelect = shadowRoot.getElementById('ca-depth-select');
     if (depthSelect) {
@@ -1195,8 +1299,41 @@
             type: 'ANALYZE_FEN',
             fen: lastFEN,
             depth: analysisDepth,
+            elo: engineElo,
           });
         }
+      });
+    }
+
+    // Flip button — override the auto-detected orientation / player side.
+    const flipBtn = shadowRoot.getElementById('ca-flip-btn');
+    if (flipBtn) {
+      flipBtn.addEventListener('click', () => {
+        // Toggle based on the CURRENT effective color so the first click always
+        // visibly flips, even when no override was set yet.
+        const current = detectPlayerColor();
+        playerColorOverride = current === 'white' ? 'black' : 'white';
+        console.log('[Chess Assistant] Board orientation set to', playerColorOverride);
+        // Re-render board + arrows and re-evaluate whose-turn gating.
+        analyzeCurrentPosition();
+        if (lastLines) {
+          window.__chessAssistantUI.updateArrows(lastLines, playerColorOverride);
+        }
+      });
+    }
+
+    // "My moves only" toggle — when on, suppress analysis on the opponent's turn.
+    const myMovesBtn = shadowRoot.getElementById('ca-mymoves-btn');
+    if (myMovesBtn) {
+      myMovesBtn.addEventListener('click', () => {
+        myMovesOnly = !myMovesOnly;
+        myMovesBtn.classList.toggle('ca-toggle-on', myMovesOnly);
+        myMovesBtn.title = myMovesOnly
+          ? "Only show YOUR best moves (hide opponent's)"
+          : 'Showing best move for whoever is to move';
+        console.log('[Chess Assistant] My-moves-only:', myMovesOnly);
+        // Re-evaluate immediately with the current position.
+        analyzeCurrentPosition();
       });
     }
 
@@ -1255,6 +1392,9 @@
 
       const ui = window.__chessAssistantUI;
       const playerColor = detectPlayerColor();
+
+      // Cache lines so a board flip can redraw arrows without re-analyzing.
+      lastLines = data.lines || null;
 
       // Update evaluation bar with the best line's score
       if (data.lines && data.lines.length > 0 && data.lines[0].score) {
