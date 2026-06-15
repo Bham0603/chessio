@@ -334,6 +334,8 @@ function strengthCommands(elo) {
 // reflects shallow, human-like calculation rather than deep engine vision.
 function effectiveDepth(elo, depth) {
   const d = depth || 18;
+  // Only cap depth for weaker Elo levels where deep search is counterproductive.
+  // At full strength, respect the user's chosen depth.
   if (elo && elo < 1320) return Math.min(d, 8);
   if (elo && elo < 2000) return Math.min(d, 12);
   return d;
@@ -345,10 +347,16 @@ function effectiveDepth(elo, depth) {
 // movetime cap the engine ALWAYS returns its best move so far within the budget,
 // so the panel never lags or stalls. The depth becomes an upper bound, not a
 // fixed target. Weaker levels (which don't need deep search) get a tighter cap.
-function searchTime(elo) {
+// At higher user-requested depths, scale the budget so the engine actually has
+// time to search deeper — otherwise selecting depth 22+ would be meaningless.
+function searchTime(elo, depth) {
   if (elo && elo < 1600) return 700;
   if (elo && elo < 2400) return 1200;
-  return 2000;
+  // Full strength: scale with depth. Base is 2s for depth ≤ 18, then add 1.5s
+  // per extra depth level. Depth 20 → 5s, depth 22 → 8s, depth 24 → 11s.
+  const d = depth || 18;
+  if (d <= 18) return 2000;
+  return 2000 + (d - 18) * 1500;
 }
 
 function parseInfoLine(line) {
@@ -389,7 +397,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const strengthCmds = strengthCommands(elo);
     const goDepth = effectiveDepth(elo, depth);
     // Stop at whichever limit is hit first: the target depth OR the time cap.
-    const goCmd = `go depth ${goDepth} movetime ${searchTime(elo)}`;
+    const goCmd = `go depth ${goDepth} movetime ${searchTime(elo, goDepth)}`;
 
     if (!isEngineReady) {
       console.log('[Chess Assistant] Not ready, queuing analysis...');

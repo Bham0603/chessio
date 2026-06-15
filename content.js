@@ -515,11 +515,25 @@
       ranks.push(rankStr);
     }
 
+    // Determine castling rights based on current piece positions
+    // White: King on e1 (row 7, col 4), Rooks on h1 (7, 7) and a1 (7, 0)
+    // Black: King on e8 (row 0, col 4), Rooks on h8 (0, 7) and a8 (0, 0)
+    let castling = '';
+    if (board[7][4] === 'K') {
+      if (board[7][7] === 'R') castling += 'K';
+      if (board[7][0] === 'R') castling += 'Q';
+    }
+    if (board[0][4] === 'k') {
+      if (board[0][7] === 'r') castling += 'k';
+      if (board[0][0] === 'r') castling += 'q';
+    }
+    if (castling === '') castling = '-';
+
     // Join ranks with '/' and append metadata
     // Try to detect active color; default others to safe values
     const position = ranks.join('/');
     const activeColor = detectActiveTurn();
-    return `${position} ${activeColor} KQkq - 0 1`;
+    return `${position} ${activeColor} ${castling} - 0 1`;
   }
 
   // ===========================================================================
@@ -608,8 +622,17 @@
   // up gracefully instead of looping forever (which would peg a low-end CPU).
   let analysisWatchdog = null;
   let watchdogRetries = 0;
-  const ANALYSIS_TIMEOUT_MS = 7000;
   const MAX_WATCHDOG_RETRIES = 2;
+
+  // Scale the watchdog timeout with depth so deeper searches aren't prematurely
+  // interrupted. At depth ≤ 18 the engine has a 2s time budget → 7s watchdog.
+  // Each depth level above 18 adds 1.5s of engine time → add the same to the
+  // watchdog plus a comfortable buffer.
+  function getWatchdogTimeout() {
+    const d = analysisDepth || 18;
+    if (d <= 18) return 7000;
+    return 7000 + (d - 18) * 2000;
+  }
 
   function armWatchdog(fen, isRetry) {
     clearTimeout(analysisWatchdog);
@@ -630,7 +653,7 @@
         type: 'ANALYZE_FEN', fen, depth: analysisDepth, elo: engineElo,
       });
       armWatchdog(fen, true); // keep watching, preserving the retry count
-    }, ANALYSIS_TIMEOUT_MS);
+    }, getWatchdogTimeout());
   }
 
   // ── User-facing orientation / move-filter state ─────────────────────────────
@@ -1433,6 +1456,28 @@
       const ui = window.__chessAssistantUI;
       const playerColor = detectPlayerColor();
 
+      // ── Handle terminal positions (checkmate / stalemate) ──────────────
+      // When the game is over, the engine returns bestmove "(none)" because
+      // there are no legal moves. Detect this and show a clear status.
+      if (!data.bestMove || data.bestMove === '(none)') {
+        lastLines = null;
+        ui.updateArrows([], playerColor);
+
+        // Determine if it's checkmate or stalemate from the last known eval.
+        // If the eval is a forced mate-in-0 it's checkmate; otherwise stalemate.
+        const lastScore = data.lines?.[0]?.score;
+        const isCheckmate = lastScore && lastScore.type === 'mate' && lastScore.value === 0;
+        const statusText = isCheckmate ? 'Checkmate' : 'Game Over — No legal moves';
+
+        ui.setStatus(statusText, false);
+        const pvContainer = ui.shadowRoot.getElementById('ca-pv-lines');
+        if (pvContainer) {
+          pvContainer.innerHTML =
+            `<div class="ca-pv-line ca-pv-loading">${statusText}</div>`;
+        }
+        return;
+      }
+
       // Cache lines so a board flip can redraw arrows without re-analyzing.
       lastLines = data.lines || null;
 
@@ -1451,9 +1496,10 @@
         ui.updatePVLines(data.lines);
       }
 
-      // Update status
-      const depth = data.lines?.[0]?.depth || '?';
-      ui.setStatus(`Depth ${depth} — ${data.bestMove}`, true);
+      // Update status with depth and best move
+      const depth = data.lines?.[0]?.depth;
+      const depthStr = depth != null ? `Depth ${depth}` : 'Complete';
+      ui.setStatus(`${depthStr} — ${data.bestMove}`, true);
     }
 
     if (message.type === 'ENGINE_PROGRESS' && window.__chessAssistantUI) {
