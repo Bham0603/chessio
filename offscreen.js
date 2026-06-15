@@ -339,6 +339,18 @@ function effectiveDepth(elo, depth) {
   return d;
 }
 
+// Hard time cap (ms) on every search. This is the key to staying responsive on
+// low-end / single-thread machines: openings reach the target depth in a few ms,
+// but complex mid/endgame positions can take 30s+ to reach depth 18. With a
+// movetime cap the engine ALWAYS returns its best move so far within the budget,
+// so the panel never lags or stalls. The depth becomes an upper bound, not a
+// fixed target. Weaker levels (which don't need deep search) get a tighter cap.
+function searchTime(elo) {
+  if (elo && elo < 1600) return 700;
+  if (elo && elo < 2400) return 1200;
+  return 2000;
+}
+
 function parseInfoLine(line) {
   const tokens = line.split(' ');
   const result = {};
@@ -376,6 +388,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     const strengthCmds = strengthCommands(elo);
     const goDepth = effectiveDepth(elo, depth);
+    // Stop at whichever limit is hit first: the target depth OR the time cap.
+    const goCmd = `go depth ${goDepth} movetime ${searchTime(elo)}`;
 
     if (!isEngineReady) {
       console.log('[Chess Assistant] Not ready, queuing analysis...');
@@ -388,13 +402,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       pendingCommands.push('stop');
       strengthCmds.forEach((c) => pendingCommands.push(c));
       pendingCommands.push(`position fen ${fen}`);
-      pendingCommands.push(`go depth ${goDepth}`);
+      pendingCommands.push(goCmd);
     } else {
       // Send analysis commands (they'll be queued properly in module mode)
       sendToEngine('stop');
       strengthCmds.forEach((c) => sendToEngine(c));
       sendToEngine(`position fen ${fen}`);
-      sendToEngine(`go depth ${goDepth}`);
+      sendToEngine(goCmd);
     }
 
     sendResponse({ status: 'analysis_started' });

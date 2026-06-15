@@ -107,8 +107,12 @@ Web Worker / WASM, so analysis lives in `offscreen.html` + `offscreen.js`.
   skill-limited `bestmove` may differ from the top MultiPV line, `offscreen.js`
   promotes (or synthesizes) the line for `bestmove` to rank 1 so the primary arrow
   always shows the level-appropriate move. Gets a yellow `.ca-elo-limited` tint
-  when below Max. `content.js` also arms an `armWatchdog()` timer that retries if
-  the engine goes silent, so the panel never stays stuck on "Analyzing…".
+  when below Max. `content.js` also arms an `armWatchdog()` timer (capped retries)
+  that nudges the engine if it goes silent, so the panel never stays stuck.
+- **Performance**: every search is time-capped via `go depth N movetime T`
+  (`searchTime()` in `offscreen.js`, ~0.7–2s). Depth is an upper bound, not a fixed
+  target — this keeps analysis responsive on low-end / single-thread machines where
+  complex mid/endgame positions would otherwise take 30s+ to reach depth 18.
 - **Depth select** — Stockfish search depth (10–24).
 - **♟ "My moves only"** (`#ca-mymoves-btn`, green when on, default ON) — toggles
   `myMovesOnly`. When on, `analyzeCurrentPosition()` only runs the engine while it
